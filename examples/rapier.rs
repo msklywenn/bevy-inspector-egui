@@ -67,7 +67,7 @@ fn setup(
         .spawn_bundle((rigid_body2, collider2, Cube))
         .insert_bundle(cube);
 
-    commands.spawn_bundle(LightBundle {
+    commands.spawn_bundle(PointLightBundle {
         transform: Transform::from_xyz(4.0, 8.0, 4.0),
         ..Default::default()
     });
