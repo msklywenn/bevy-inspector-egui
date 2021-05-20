@@ -64,7 +64,7 @@ impl NumberAttributes<f32> {
     }
 }
 
-pub trait Num: emath::Numeric {
+pub trait Num: egui::emath::Numeric {
     fn default_speed() -> Option<f32> {
         None
     }
