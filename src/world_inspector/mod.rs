@@ -45,6 +45,10 @@ pub struct WorldInspectorParams {
     pub despawnable_entities: bool,
     /// The window the inspector should be displayed on
     pub window: WindowId,
+    /// Currently selected entity
+    pub entity: Option<Entity>,
+    /// Display in side panel
+    pub panel: bool
 }
 
 impl WorldInspectorParams {
@@ -56,6 +60,8 @@ impl WorldInspectorParams {
             enabled: true,
             despawnable_entities: false,
             window: WindowId::primary(),
+            entity: None,
+            panel: false
         }
     }
 
@@ -105,6 +111,7 @@ struct WorldUIContext<'a> {
     world: &'a mut World,
     ui_ctx: Option<&'a egui::CtxRef>,
     delete_entity: Cell<Option<Entity>>,
+    selected_entity: Option<Entity>,
 }
 impl<'a> WorldUIContext<'a> {
     fn new(ui_ctx: Option<&'a egui::CtxRef>, world: &'a mut World) -> WorldUIContext<'a> {
@@ -112,6 +119,7 @@ impl<'a> WorldUIContext<'a> {
             world,
             ui_ctx,
             delete_entity: Cell::new(None),
+            selected_entity: None,
         }
     }
 }
@@ -143,13 +151,20 @@ impl<'a> WorldUIContext<'a> {
         let dummy_id = egui::Id::new(42);
         let entity_options = params.entity_options();
 
-        let mut changed = false;
-
         for entity in root_entities.iter(self.world) {
-            changed |= self.entity_ui(ui, entity, params, dummy_id, &entity_options);
+            self.selected_entity = self
+                .entity_ui(
+                    ui,
+                    entity,
+                    params,
+                    dummy_id,
+                    &entity_options,
+                    self.selected_entity,
+                )
+                .or(self.selected_entity);
         }
 
-        changed
+        false
     }
 
     fn entity_ui(
@@ -159,14 +174,42 @@ impl<'a> WorldUIContext<'a> {
         params: &WorldInspectorParams,
         id: egui::Id,
         entity_options: &EntityAttributes,
-    ) -> bool {
-        CollapsingHeader::new(self.entity_name(entity))
-            .id_source(id.with(entity))
-            .show(ui, |ui| {
-                self.entity_ui_inner(ui, entity, params, id, entity_options)
-            })
-            .body_returned
-            .unwrap_or(false)
+        selected: Option<Entity>,
+    ) -> Option<Entity> {
+        let entity_name = self.entity_name(entity).to_string();
+        let mut local_selection = if selected == Some(entity) {
+            selected
+        } else {
+            None
+        };
+        let mut selector = |ui: &mut egui::Ui| -> egui::Response {
+            let is_selected = local_selection == Some(entity);
+            let response = ui.selectable_label(is_selected, entity_name.clone());
+            if response.clicked() {
+                local_selection = local_selection.xor(Some(entity));
+            }
+            response
+        };
+        let children = self.world.get::<Children>(entity);
+        let mut selected = None;
+        if let Some(children) = children {
+            CollapsingHeader::new(entity_name.as_str())
+                .id_source(id.with(entity))
+                .rectangle(false)
+                .show_with_custom_header(ui, selector, |ui| {
+                    for &child in children.iter() {
+                        selected = self
+                            .entity_ui(ui, child, params, id, entity_options, selected)
+                            .or(selected);
+                    }
+                });
+        } else {
+            ui.horizontal(|ui| {
+                ui.add_space(ui.spacing().indent);
+                selector(ui);
+            });
+        }
+        local_selection.or(selected)
     }
 
     fn entity_ui_inner(
@@ -214,7 +257,7 @@ impl<'a> WorldUIContext<'a> {
         if let Some(children) = children {
             ui.label("Children");
             for &child in children.iter() {
-                self.entity_ui(ui, child, params, id, entity_options);
+                self.entity_ui(ui, child, params, id, entity_options, None);
             }
         } else {
             ui.label("No children");
@@ -296,6 +339,7 @@ impl<'a> WorldUIContext<'a> {
 
         CollapsingHeader::new(name)
             .id_source(id.with(component_info.id()))
+            .rectangle(false)
             .show(ui, |ui| {
                 if params.is_read_only(type_id) {
                     ui.set_enabled(false);

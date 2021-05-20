@@ -122,21 +122,35 @@ where
         None => return,
     };
 
+    let mut entity = params.entity;
     let mut is_open = true;
-    egui::Window::new("World")
-        .open(&mut is_open)
-        .scroll(true)
-        .show(ctx, |ui| {
-            crate::plugin::default_settings(ui);
-            let world: &mut World = unsafe { &mut *world_ptr };
-            let mut ui_context = WorldUIContext::new(Some(egui_context.ctx()), world);
-            ui_context.world_ui::<F>(ui, &params);
-        });
-
-    if !is_open {
-        world
-            .get_resource_mut::<WorldInspectorParams>()
-            .unwrap()
-            .enabled = false;
+    if params.panel {
+        egui::SidePanel::left("World", 200.0)
+            .show(ctx, |ui| {
+                crate::plugin::default_settings(ui);
+                let world: &mut World = unsafe { &mut *world_ptr };
+                let mut ui_context = WorldUIContext::new(Some(egui_context.ctx()), world);
+                ui_context.selected_entity = entity;
+                ui_context.world_ui::<F>(ui, &params);
+                entity = ui_context.selected_entity;
+            });
+    } else {
+        egui::Window::new("World")
+            .open(&mut is_open)
+            .scroll(true)
+            .show(ctx, |ui| {
+                crate::plugin::default_settings(ui);
+                let world: &mut World = unsafe { &mut *world_ptr };
+                let mut ui_context = WorldUIContext::new(Some(egui_context.ctx()), world);
+                ui_context.selected_entity = entity;
+                ui_context.world_ui::<F>(ui, &params);
+                entity = ui_context.selected_entity;
+            });
     }
+
+    let mut params = world
+        .get_resource_mut::<WorldInspectorParams>()
+        .unwrap();
+    params.enabled = is_open;
+    params.entity = entity;
 }
