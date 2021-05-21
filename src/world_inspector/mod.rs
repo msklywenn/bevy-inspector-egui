@@ -48,7 +48,7 @@ pub struct WorldInspectorParams {
     /// Currently selected entity
     pub entity: Option<Entity>,
     /// Display in side panel
-    pub panel: bool
+    pub panel: bool,
 }
 
 impl WorldInspectorParams {
@@ -61,7 +61,7 @@ impl WorldInspectorParams {
             despawnable_entities: false,
             window: WindowId::primary(),
             entity: None,
-            panel: false
+            panel: false,
         }
     }
 
@@ -151,20 +151,35 @@ impl<'a> WorldUIContext<'a> {
         let dummy_id = egui::Id::new(42);
         let entity_options = params.entity_options();
 
-        for entity in root_entities.iter(self.world) {
-            self.selected_entity = self
-                .entity_ui(
-                    ui,
-                    entity,
-                    params,
-                    dummy_id,
-                    &entity_options,
-                    self.selected_entity,
-                )
-                .or(self.selected_entity);
-        }
+        self.selected_entity =
+            root_entities
+                .iter(self.world)
+                .fold(self.selected_entity, |new_selection, entity| {
+                    self.entity_ui(ui, entity, params, dummy_id, &entity_options, new_selection)
+                });
 
         false
+    }
+
+    fn toggle(
+        &self,
+        ui: &mut egui::Ui,
+        current: Option<Entity>,
+        target: Option<Entity>,
+        name: impl ToString,
+    ) -> (Option<Entity>, egui::Response) {
+        let was = current == target;
+        let response = ui.selectable_label(was, name);
+        let result = if response.clicked() {
+            if was {
+                None
+            } else {
+                target
+            }
+        } else {
+            current
+        };
+        (result, response)
     }
 
     fn entity_ui(
@@ -176,40 +191,32 @@ impl<'a> WorldUIContext<'a> {
         entity_options: &EntityAttributes,
         selected: Option<Entity>,
     ) -> Option<Entity> {
+        let mut result = selected;
         let entity_name = self.entity_name(entity).to_string();
-        let mut local_selection = if selected == Some(entity) {
-            selected
-        } else {
-            None
-        };
-        let mut selector = |ui: &mut egui::Ui| -> egui::Response {
-            let is_selected = local_selection == Some(entity);
-            let response = ui.selectable_label(is_selected, entity_name.clone());
-            if response.clicked() {
-                local_selection = local_selection.xor(Some(entity));
-            }
-            response
-        };
         let children = self.world.get::<Children>(entity);
-        let mut selected = None;
         if let Some(children) = children {
             CollapsingHeader::new(entity_name.as_str())
                 .id_source(id.with(entity))
-                .rectangle(false)
-                .show_with_custom_header(ui, selector, |ui| {
-                    for &child in children.iter() {
-                        selected = self
-                            .entity_ui(ui, child, params, id, entity_options, selected)
-                            .or(selected);
-                    }
+                .rectangle(!params.panel)
+                .show_with_custom_header(ui, |ui| {
+                    let (toggled, response) = self.toggle(ui, selected, Some(entity), entity_name);
+                    result = toggled;
+                    //let response = ui.selectable_value(&mut result, Some(entity), entity_name);
+                    (response, |ui| {
+                        result = children.iter().fold(result, |selected, &child| {
+                            self.entity_ui(ui, child, params, id, entity_options, selected)
+                        })
+                    })
                 });
         } else {
             ui.horizontal(|ui| {
                 ui.add_space(ui.spacing().indent);
-                selector(ui);
+                let (toggled, _) = self.toggle(ui, selected, Some(entity), entity_name);
+                result = toggled;
+                //ui.selectable_value(&mut result, Some(entity), entity_name);
             });
         }
-        local_selection.or(selected)
+        result
     }
 
     fn entity_ui_inner(
@@ -284,7 +291,12 @@ impl<'a> WorldUIContext<'a> {
         id: egui::Id,
     ) -> bool {
         if !components.is_empty() {
-            ui.label(title);
+            if params.panel {
+                ui.heading(title);
+                ui.separator();
+            } else {
+                ui.label(title);
+            }
 
             let iter = components.iter().map(|component_id| {
                 let component_info = self.world.components().get_info(*component_id).unwrap();
@@ -339,6 +351,7 @@ impl<'a> WorldUIContext<'a> {
 
         CollapsingHeader::new(name)
             .id_source(id.with(component_info.id()))
+            .default_open(params.panel && !params.is_read_only(type_id))
             .rectangle(false)
             .show(ui, |ui| {
                 if params.is_read_only(type_id) {
